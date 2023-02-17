@@ -97,6 +97,7 @@ public class ChannelRouteBuilder extends ErrorHandlerRouteBuilder {
     private String paygopsHost;
 
     private String rosterHost;
+    private String notificationFlow;
 
 
     public ChannelRouteBuilder(@Value("#{'${dfspids}'.split(',')}") List<String> dfspIds,
@@ -116,6 +117,7 @@ public class ChannelRouteBuilder extends ErrorHandlerRouteBuilder {
                                @Value("${paygops.host}") String paygopsHost,
                                @Value("${roster.host}") String rosterHost,
                                @Value("${rest.authorization.header}") String restAuthHeader,
+                               @Value("${bpmn.flows.notification}") String notificationFlow,
                                ZeebeClient zeebeClient,
                                ZeebeProcessStarter zeebeProcessStarter,
                                @Autowired(required = false) AuthProcessor authProcessor,
@@ -146,6 +148,7 @@ public class ChannelRouteBuilder extends ErrorHandlerRouteBuilder {
         this.paygopsHost=paygopsHost;
         this.rosterHost=rosterHost;
         this.restAuthHeader = restAuthHeader;
+        this.notificationFlow = notificationFlow;
         this.operationsAuthEnabled = operationsAuthEnabled;
     }
 
@@ -161,6 +164,7 @@ public class ChannelRouteBuilder extends ErrorHandlerRouteBuilder {
         workflowRoutes();
         acknowledgementRoutes();
         paybillRoutes();
+        notificationRoutes();
     }
     private void handleExceptions(){
         onException(BeanValidationException.class)
@@ -682,6 +686,33 @@ public class ChannelRouteBuilder extends ErrorHandlerRouteBuilder {
                     logger.info("Workflow Name:{}",workflowName);
                     String transactionId = zeebeProcessStarter.startZeebeWorkflowC2B(workflowName, variables);
                     e.getIn().setBody(transactionId);
+                });
+    }
+
+    private void notificationRoutes(){
+        from("rest:POST:/channel/sendNotifications")
+                .id("notification")
+                .log(LoggingLevel.INFO, "Notification Workflow Started")
+                .process(exchange -> {
+                    String notificationBodyString = exchange.getIn().getBody(String.class);
+                    logger.info("Payload : {}",notificationBodyString);
+                    JSONObject body = new JSONObject(notificationBodyString);
+                    Map<String, Object> extraVariables = new HashMap<>();
+                    extraVariables.put("accountId", body.getString("account"));
+                    extraVariables.put(TRANSACTION_ID, body.getString("account"));
+                    extraVariables.put("amount", body.getString("amount"));
+                    extraVariables.put("phoneNumber", body.getString("phoneNumber"));
+                    extraVariables.put("originDate",body.getLong("originDate"));
+                    extraVariables.put("messageType",body.getString("messageType"));
+                    extraVariables.put("parentWorkflowId",body.getString("parentWorkflowId"));
+                    extraVariables.put("internalId",body.getLong("internalId"));
+
+                    String transactionId = zeebeProcessStarter.startZeebeWorkflow(notificationFlow,
+                            exchange.getIn().getBody(String.class),
+                            extraVariables);
+                    JSONObject response = new JSONObject();
+                    response.put("transactionId", transactionId);
+                    exchange.getIn().setBody(response.toString());
                 });
     }
 
